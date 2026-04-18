@@ -1,7 +1,7 @@
 # ============================================================
 #  OVERSEASON - Installer
 #  Run with:
-#  irm https://raw.githubusercontent.com/YOUR_USERNAME/overseason/main/install.ps1 | iex
+#  irm https://raw.githubusercontent.com/ClickerQuestOffical/overseason/main/install.ps1 | iex
 # ============================================================
 
 $ErrorActionPreference = "Stop"
@@ -23,14 +23,24 @@ Write-Host ""
 Write-Host ("  " + ("-" * 50)) -ForegroundColor DarkGray
 Write-Host ""
 
-# -- Create folder -------------------------------------------
-Write-Host "  [1/4] Creating folder..." -ForegroundColor DarkGray
+# -- Create folders ------------------------------------------
+Write-Host "  [1/4] Creating folders..." -ForegroundColor DarkGray
 New-Item -ItemType Directory -Path $installDir -Force | Out-Null
 New-Item -ItemType Directory -Path "$installDir\sessions" -Force | Out-Null
 
 # -- Download files ------------------------------------------
 Write-Host "  [2/4] Downloading Overseason..." -ForegroundColor DarkGray
-Invoke-WebRequest "$repoBase/overseason.ps1" -OutFile "$installDir\overseason.ps1" -UseBasicParsing
+try {
+    Invoke-WebRequest "$repoBase/overseason.ps1?t=$(Get-Date -UFormat %s)" -OutFile "$installDir\overseason.ps1" -UseBasicParsing
+    Write-Host "  Downloaded successfully." -ForegroundColor DarkGray
+}
+catch {
+    Write-Host ""
+    Write-Host "  ERROR: Could not download overseason.ps1" -ForegroundColor Red
+    Write-Host "  $_" -ForegroundColor Red
+    Write-Host "  Check your internet and try again." -ForegroundColor Yellow
+    exit 1
+}
 
 # -- API key -------------------------------------------------
 Write-Host "  [3/4] Setting up API key..." -ForegroundColor DarkGray
@@ -49,46 +59,52 @@ while ([string]::IsNullOrWhiteSpace($apiKey)) {
 }
 "GROQ_API_KEY=$($apiKey.Trim())" | Out-File "$installDir\.env" -Encoding utf8
 Write-Host "  Key saved." -ForegroundColor DarkGray
+Write-Host ""
 
-# -- Register command (persists after restart) ---------------
+# -- Register 'overseason' command ---------------------------
 Write-Host "  [4/4] Registering 'overseason' command..." -ForegroundColor DarkGray
 
-$batContent = "@echo off`r`npowershell -ExecutionPolicy Bypass -NoProfile -File `"%USERPROFILE%\overseason\overseason.ps1`" %*"
+$batContent  = "@echo off`r`npowershell -ExecutionPolicy Bypass -NoProfile -File `"%USERPROFILE%\overseason\overseason.ps1`" %*"
+$registered  = $false
+$registeredBy = ""
 
-# Method 1: WindowsApps folder (already permanently on PATH in Windows 10/11)
+# Method 1: WindowsApps - already permanently on PATH in Win10/11
 $windowsApps = "$env:LOCALAPPDATA\Microsoft\WindowsApps"
-$installedToWindowsApps = $false
-
-if (Test-Path $windowsApps) {
+if (-not $registered -and (Test-Path $windowsApps)) {
     try {
-        $batContent | Out-File "$windowsApps\overseason.bat" -Encoding ascii
-        $installedToWindowsApps = $true
-        Write-Host "  Registered in WindowsApps (permanent, no PATH changes needed)." -ForegroundColor DarkGray
-    }
-    catch {
-        # Fall through to Method 2
-    }
+        $batContent | Out-File "$windowsApps\overseason.bat" -Encoding ascii -Force
+        if (Test-Path "$windowsApps\overseason.bat") {
+            $registered   = $true
+            $registeredBy = "WindowsApps"
+        }
+    } catch { }
 }
 
-# Method 2: Fallback - add installDir to user PATH permanently via registry
-if (-not $installedToWindowsApps) {
-    $batContent | Out-File "$installDir\overseason.bat" -Encoding ascii
-
-    # Use registry directly for reliable persistent PATH (no 1024 char setx limit)
-    $regPath = "HKCU:\Environment"
-    $currentPath = (Get-ItemProperty -Path $regPath -Name PATH -ErrorAction SilentlyContinue).PATH
-
-    if ($currentPath -notlike "*$installDir*") {
-        $newPath = if ($currentPath) { "$currentPath;$installDir" } else { $installDir }
-        Set-ItemProperty -Path $regPath -Name PATH -Value $newPath
-        # Broadcast WM_SETTINGCHANGE so open windows pick up the new PATH immediately
-        $signature = '[DllImport("user32.dll")] public static extern int SendMessageTimeout(IntPtr hWnd, uint Msg, UIntPtr wParam, string lParam, uint fuFlags, uint uTimeout, out UIntPtr lpdwResult);'
-        $type = Add-Type -MemberDefinition $signature -Name WinAPI -Namespace Win32 -PassThru
-        $result = [UIntPtr]::Zero
-        $type::SendMessageTimeout([IntPtr]0xFFFF, 0x001A, [UIntPtr]::Zero, "Environment", 2, 5000, [ref]$result) | Out-Null
-        Write-Host "  Added to PATH via registry (permanent)." -ForegroundColor DarkGray
-    }
+# Method 2: Registry user PATH
+if (-not $registered) {
+    try {
+        $batContent | Out-File "$installDir\overseason.bat" -Encoding ascii -Force
+        $regPath     = "HKCU:\Environment"
+        $currentPath = (Get-ItemProperty -Path $regPath -Name PATH -ErrorAction SilentlyContinue).PATH
+        if ($currentPath -notlike "*$installDir*") {
+            $newPath = if ($currentPath) { "$currentPath;$installDir" } else { $installDir }
+            Set-ItemProperty -Path $regPath -Name PATH -Value $newPath
+        }
+        $registered   = $true
+        $registeredBy = "user PATH"
+    } catch { }
 }
+
+# Method 3: System32 - works on every Windows, no PATH needed
+if (-not $registered) {
+    try {
+        $batContent | Out-File "C:\Windows\System32\overseason.bat" -Encoding ascii -Force
+        $registered   = $true
+        $registeredBy = "System32"
+    } catch { }
+}
+
+Write-Host "  Registered via $registeredBy." -ForegroundColor DarkGray
 
 # -- Done ----------------------------------------------------
 Write-Host ""
@@ -96,9 +112,19 @@ Write-Host ("  " + ("-" * 50)) -ForegroundColor DarkGray
 Write-Host ""
 Write-Host "  Installation complete!" -ForegroundColor Green
 Write-Host ""
-Write-Host "  Close this window and open a new CMD or PowerShell, then type:" -ForegroundColor White
-Write-Host ""
-Write-Host "      overseason" -ForegroundColor Cyan
-Write-Host ""
-Write-Host "  This command will work every time, even after restart." -ForegroundColor DarkGray
+
+if ($registered) {
+    Write-Host "  Open a brand new CMD window and type:" -ForegroundColor White
+    Write-Host ""
+    Write-Host "      overseason" -ForegroundColor Cyan
+    Write-Host ""
+    Write-Host "  Works every time, including after restart." -ForegroundColor DarkGray
+} else {
+    Write-Host "  Auto-registration failed. Run this one line to fix it:" -ForegroundColor Yellow
+    Write-Host ""
+    Write-Host "  `$b = '@echo off' + [char]13 + [char]10 + 'powershell -ExecutionPolicy Bypass -NoProfile -File ""%USERPROFILE%\overseason\overseason.ps1"" %*'; `$b | Out-File `"$env:LOCALAPPDATA\Microsoft\WindowsApps\overseason.bat`" -Encoding ascii" -ForegroundColor White
+    Write-Host ""
+    Write-Host "  Or run directly: powershell -ExecutionPolicy Bypass -File $installDir\overseason.ps1" -ForegroundColor DarkGray
+}
+
 Write-Host ""

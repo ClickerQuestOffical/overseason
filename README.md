@@ -15,19 +15,17 @@ Chat with it, ask it to do things on your PC, and it writes and runs PowerShell 
 
 ## Install
 
-Open **PowerShell** and run:
+Open **PowerShell as Administrator** and run:
 
 ```powershell
-Invoke-RestMethod -Uri "https://raw.githubusercontent.com/ClickerQuestOffical/overseason/main/install.ps1" -Headers @{"Cache-Control"="no-cache"} | iex
+irm https://raw.githubusercontent.com/ClickerQuestOffical/overseason/main/install.ps1?t=1 | iex
 ```
 
-After install, open a new CMD window and type:
+After install, open a **new** CMD or PowerShell window and type:
 
 ```
 overseason
 ```
-
-Works every time, even after restart.
 
 ---
 
@@ -54,28 +52,53 @@ Overseason uses [Groq](https://console.groq.com) - free, no credit card needed.
 
 ---
 
-## Features
+## What it can do
 
-**Tasks** - Just ask it to do something:
-- "create a folder on my desktop called projects"
-- "make a python script that prints hello world"
-- "open settings"
-- "delete all .tmp files in downloads"
+Just ask it anything:
 
-**Memory** - It remembers things you tell it:
-- "my name is Luke" - saved forever
-- "my projects are in C:\dev" - uses this in future tasks
+| You say | What happens |
+|---|---|
+| `open calculator` | Opens the calculator |
+| `create a folder on my desktop called projects` | Creates the folder |
+| `make a python script that prints hello world` | Writes the file |
+| `show my ip address` | Runs ipconfig |
+| `delete all .tmp files in downloads` | Cleans them up |
+| `my name is Luke` | Remembers it forever |
+| `what is 15% of 340` | Just answers in chat |
 
-**Sessions** - Auto-saves every conversation. Use `/sessions` to reload any past chat.
+---
 
-**Voice** - Type `/voice` to switch to speaking instead of typing. Uses Windows Speech Recognition built into Windows.
+## Troubleshooting
 
-**Auto-update** - Checks GitHub for a newer version on every launch and updates itself automatically.
+**'overseason' is not recognized after install**
+
+Run this one line in PowerShell:
+
+```powershell
+"@echo off`r`npowershell -ExecutionPolicy Bypass -NoProfile -File `"%USERPROFILE%\overseason\overseason.ps1`"" | Out-File "$env:LOCALAPPDATA\Microsoft\WindowsApps\overseason.bat" -Encoding ascii
+```
+
+Then open a new CMD window and type `overseason`.
+
+**Installer says 404 on download**
+
+PowerShell may have cached an old version. Run this instead:
+
+```powershell
+irm "https://raw.githubusercontent.com/ClickerQuestOffical/overseason/main/install.ps1?t=$(Get-Date -UFormat %s)" | iex
+```
+
+**Run directly without installing**
+
+```powershell
+powershell -ExecutionPolicy Bypass -File "$env:USERPROFILE\overseason\overseason.ps1"
+```
 
 ---
 
 ## Notes
 
 - API key stored in `.env` locally, never committed to git
-- Task scripts are temp files, deleted immediately after running
-- Pure PowerShell - no Node, Python, or installs required
+- Task scripts are temp files deleted immediately after running
+- Conversations auto-save to the `sessions` folder on exit
+- Pure PowerShell - no Node, Python, or extra installs required
