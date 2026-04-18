@@ -18,7 +18,7 @@ Chat with it, ask it to do things on your PC, and it writes and runs PowerShell 
 Open **PowerShell** and run:
 
 ```powershell
-irm https://raw.githubusercontent.com/ClickerQuestOffical/overseason/main/install.ps1 | iex
+Invoke-RestMethod -Uri "https://raw.githubusercontent.com/ClickerQuestOffical/overseason/main/install.ps1" -Headers @{"Cache-Control"="no-cache"} | iex
 ```
 
 After install, open a new CMD window and type:
