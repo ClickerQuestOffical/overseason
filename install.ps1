@@ -6,7 +6,7 @@
 
 $ErrorActionPreference = "Stop"
 
-$GH_USER    = "YOUR_USERNAME"
+$GH_USER    = "ClickerQuestOffical"
 $GH_REPO    = "overseason"
 $repoBase   = "https://raw.githubusercontent.com/$GH_USER/$GH_REPO/main"
 $installDir = "$env:USERPROFILE\overseason"
