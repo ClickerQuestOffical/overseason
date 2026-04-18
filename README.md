@@ -18,7 +18,7 @@ Chat with it normally, or ask it to do anything on your PC — it writes a Power
 Open **PowerShell** and run this one line:
 
 ```powershell
-irm https://raw.githubusercontent.com/YOUR_USERNAME/overseason/main/install.ps1 | iex
+irm https://raw.githubusercontent.com/ClickerQuestOffical/overseason/main/install.ps1 | iex
 ```
 
 The installer will:
