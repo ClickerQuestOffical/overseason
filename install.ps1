@@ -6,7 +6,7 @@
 
 $ErrorActionPreference = "Stop"
 
-$repoBase   = "https://raw.githubusercontent.com/YOUR_USERNAME/overseason/main"
+$repoBase   = "https://raw.githubusercontent.com/ClickerQuestOffical/overseason/main"
 $installDir = "$env:USERPROFILE\overseason"
 
 # ── Banner ───────────────────────────────────────────────────
