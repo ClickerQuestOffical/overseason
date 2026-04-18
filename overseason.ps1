@@ -4,7 +4,7 @@
 # ============================================================
 
 $VERSION    = "1.2.0"
-$GH_USER    = "YOUR_USERNAME"
+$GH_USER    = "ClickerQuestOffical"
 $GH_REPO    = "overseason"
 $INSTALL_DIR = $PSScriptRoot
 
