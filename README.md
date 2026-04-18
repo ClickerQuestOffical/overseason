@@ -9,34 +9,31 @@
 
 **AI-powered Windows assistant that runs in your terminal.**
 
-Chat with it normally, or ask it to do anything on your PC — it writes a PowerShell script in the background and runs it for you.
+Chat with it, ask it to do things on your PC, and it writes and runs PowerShell scripts in the background.
 
 ---
 
 ## Install
 
-Open **PowerShell** and run this one line:
+Open **PowerShell** and run:
 
 ```powershell
-irm https://raw.githubusercontent.com/ClickerQuestOffical/overseason/main/install.ps1 | iex
+irm https://raw.githubusercontent.com/YOUR_USERNAME/overseason/main/install.ps1 | iex
 ```
 
-The installer will:
-- Download Overseason to `%USERPROFILE%\overseason`
-- Ask for your free Groq API key
-- Register the `overseason` command so you can launch it from anywhere
-
-**After install, close and reopen CMD, then type:**
+After install, open a new CMD window and type:
 
 ```
 overseason
 ```
 
+Works every time, even after restart.
+
 ---
 
 ## Getting a Free API Key
 
-Overseason uses [Groq](https://console.groq.com) for AI — it's free and requires no credit card.
+Overseason uses [Groq](https://console.groq.com) - free, no credit card needed.
 
 1. Go to [console.groq.com/keys](https://console.groq.com/keys)
 2. Sign up (free)
@@ -45,42 +42,40 @@ Overseason uses [Groq](https://console.groq.com) for AI — it's free and requir
 
 ---
 
-## What it can do
+## Commands
 
-Just talk to it. Examples:
-
-| You say | What happens |
+| Command | What it does |
 |---|---|
-| `open spotify` | Launches Spotify |
-| `create a folder called projects on my desktop` | Creates the folder |
-| `show my ip address` | Runs `ipconfig` and shows it |
-| `delete all .tmp files in downloads` | Writes and runs a cleanup script |
-| `what's 15% of 340` | Just answers in chat |
-| `install git` | Requests admin, runs the install |
-
-When it needs to **do** something, it:
-1. Shows `Thinking...` while writing the script
-2. Runs it automatically (temp file, deleted after)
-3. Requests admin elevation if the task requires it
+| `exit` | Save session and quit |
+| `clear` | Save session and start fresh |
+| `/voice` | Toggle voice input on/off |
+| `/sessions` | Browse and reload past conversations |
+| `/memory` | See everything Overseason remembers about you |
 
 ---
 
-## Manual Setup (no installer)
+## Features
 
-If you prefer to set it up manually:
+**Tasks** - Just ask it to do something:
+- "create a folder on my desktop called projects"
+- "make a python script that prints hello world"
+- "open settings"
+- "delete all .tmp files in downloads"
 
-```powershell
-# Clone or download the repo
-# Copy .env.example to .env
-# Edit .env and add your Groq API key
-# Run directly:
-powershell -ExecutionPolicy Bypass -File overseason.ps1
-```
+**Memory** - It remembers things you tell it:
+- "my name is Luke" - saved forever
+- "my projects are in C:\dev" - uses this in future tasks
+
+**Sessions** - Auto-saves every conversation. Use `/sessions` to reload any past chat.
+
+**Voice** - Type `/voice` to switch to speaking instead of typing. Uses Windows Speech Recognition built into Windows.
+
+**Auto-update** - Checks GitHub for a newer version on every launch and updates itself automatically.
 
 ---
 
 ## Notes
 
-- Your API key is stored locally in a `.env` file — never committed to git
-- Task scripts are written to a temp file and deleted immediately after running
-- Built with PowerShell only — no Node, no Python, no installs required
+- API key stored in `.env` locally, never committed to git
+- Task scripts are temp files, deleted immediately after running
+- Pure PowerShell - no Node, Python, or installs required

@@ -1,9 +1,15 @@
 # ============================================================
 #  OVERSEASON - AI-powered Windows assistant
+#  Version: 1.2.0
 # ============================================================
 
+$VERSION    = "1.2.0"
+$GH_USER    = "YOUR_USERNAME"
+$GH_REPO    = "overseason"
+$INSTALL_DIR = $PSScriptRoot
+
 # -- Load API key from .env ----------------------------------
-$envFile = Join-Path $PSScriptRoot ".env"
+$envFile = Join-Path $INSTALL_DIR ".env"
 if (Test-Path $envFile) {
     Get-Content $envFile | ForEach-Object {
         if ($_ -match "^GROQ_API_KEY=(.+)$") {
@@ -15,7 +21,7 @@ if (Test-Path $envFile) {
 if (-not $env:GROQ_API_KEY) {
     Write-Host ""
     Write-Host "  ERROR: GROQ_API_KEY not set." -ForegroundColor Red
-    Write-Host "  Edit the .env file here: $PSScriptRoot" -ForegroundColor Yellow
+    Write-Host "  Edit the .env file in: $INSTALL_DIR" -ForegroundColor Yellow
     Write-Host "  Get a free key at: https://console.groq.com/keys" -ForegroundColor Yellow
     Write-Host ""
     exit 1
@@ -23,6 +29,7 @@ if (-not $env:GROQ_API_KEY) {
 
 # -- Banner --------------------------------------------------
 function Show-Banner {
+    param([bool]$VoiceOn = $false)
     Clear-Host
     Write-Host ""
     Write-Host "   ___  _   _ ___ ___ ___ ___ _   ___ ___  _  _ " -ForegroundColor Cyan
@@ -30,15 +37,191 @@ function Show-Banner {
     Write-Host " | (_) | |_| | _||   / _|\__ \ |_| _| (_) | .' |" -ForegroundColor Cyan
     Write-Host "  \___/ \___/|___|_|_\___|___/\___|\___\___/|_|\_|" -ForegroundColor Cyan
     Write-Host ""
-    Write-Host "  AI-powered Windows assistant" -ForegroundColor DarkCyan
-    Write-Host "  Chat naturally, or ask it to do anything on your PC." -ForegroundColor DarkGray
-    Write-Host "  'exit' to quit   |   'clear' to reset conversation" -ForegroundColor DarkGray
+    $voiceStatus = if ($VoiceOn) { "  [VOICE ON]" } else { "" }
+    Write-Host "  AI-powered Windows assistant  v$VERSION$voiceStatus" -ForegroundColor DarkCyan
+    Write-Host "  exit  |  clear  |  /voice  |  /sessions  |  /memory" -ForegroundColor DarkGray
     Write-Host ""
     Write-Host ("  " + ("-" * 50)) -ForegroundColor DarkGray
     Write-Host ""
 }
 
-# -- Call Groq API (raw, no JSON mode) -----------------------
+# -- Auto-update ---------------------------------------------
+function Check-ForUpdates {
+    try {
+        Write-Host "  Checking for updates..." -ForegroundColor DarkGray -NoNewline
+        $url = "https://raw.githubusercontent.com/$GH_USER/$GH_REPO/main/version.txt"
+        $latest = (Invoke-WebRequest -Uri $url -UseBasicParsing -TimeoutSec 5).Content.Trim()
+
+        if ($latest -and $latest -ne $VERSION) {
+            Write-Host "`r                          `r" -NoNewline
+            Write-Host "  New version available: v$latest  (you have v$VERSION)" -ForegroundColor Yellow
+            Write-Host "  Updating now..." -ForegroundColor DarkYellow
+
+            $scriptUrl = "https://raw.githubusercontent.com/$GH_USER/$GH_REPO/main/overseason.ps1"
+            Invoke-WebRequest -Uri $scriptUrl -OutFile "$INSTALL_DIR\overseason.ps1" -UseBasicParsing
+
+            Write-Host "  Updated to v$latest! Restarting..." -ForegroundColor Green
+            Start-Sleep -Seconds 1
+            Start-Process powershell -ArgumentList "-ExecutionPolicy Bypass -NoProfile -File `"$INSTALL_DIR\overseason.ps1`""
+            exit
+        }
+        else {
+            Write-Host "`r                          `r" -NoNewline
+        }
+    }
+    catch {
+        # No internet or GitHub down - just continue silently
+        Write-Host "`r                          `r" -NoNewline
+    }
+}
+
+# -- Memory --------------------------------------------------
+$memoryFile = Join-Path $INSTALL_DIR "memory.json"
+
+function Load-Memory {
+    if (Test-Path $memoryFile) {
+        try {
+            $raw = Get-Content $memoryFile -Raw
+            $obj = $raw | ConvertFrom-Json
+            $ht  = @{}
+            $obj.PSObject.Properties | ForEach-Object { $ht[$_.Name] = $_.Value }
+            return $ht
+        }
+        catch { return @{} }
+    }
+    return @{}
+}
+
+function Save-Memory {
+    param([hashtable]$Memory)
+    $Memory | ConvertTo-Json | Out-File $memoryFile -Encoding utf8
+}
+
+function Memory-ToContext {
+    param([hashtable]$Memory)
+    if ($Memory.Count -eq 0) { return "" }
+    $lines = @("Things you know about this user (use this context naturally):")
+    foreach ($key in $Memory.Keys) {
+        $lines += "  - $key`: $($Memory[$key])"
+    }
+    return ($lines -join "`n")
+}
+
+# -- Sessions ------------------------------------------------
+$sessionsDir = Join-Path $INSTALL_DIR "sessions"
+if (-not (Test-Path $sessionsDir)) {
+    New-Item -ItemType Directory -Path $sessionsDir -Force | Out-Null
+}
+
+function Save-Session {
+    param([System.Collections.Generic.List[hashtable]]$History)
+    $messages = @($History | Where-Object { $_.role -ne "system" })
+    if ($messages.Count -eq 0) { return }
+    $timestamp   = Get-Date -Format "yyyy-MM-dd_HH-mm-ss"
+    $sessionFile = Join-Path $sessionsDir "session_$timestamp.json"
+    $messages | ConvertTo-Json -Depth 5 | Out-File $sessionFile -Encoding utf8
+}
+
+function Show-Sessions {
+    $files = Get-ChildItem $sessionsDir -Filter "*.json" -ErrorAction SilentlyContinue |
+             Sort-Object LastWriteTime -Descending |
+             Select-Object -First 15
+
+    if (-not $files -or $files.Count -eq 0) {
+        Write-Host ""
+        Write-Host "  No saved sessions yet." -ForegroundColor DarkGray
+        Write-Host ""
+        return $null
+    }
+
+    Write-Host ""
+    Write-Host "  Saved Sessions:" -ForegroundColor Cyan
+    Write-Host ("  " + ("-" * 40)) -ForegroundColor DarkGray
+
+    for ($i = 0; $i -lt $files.Count; $i++) {
+        $date    = $files[$i].LastWriteTime.ToString("MMM dd yyyy  hh:mm tt")
+        $size    = [math]::Round((Get-Item $files[$i].FullName).Length / 1KB, 1)
+        Write-Host "  [$($i + 1)] $date  (${size}KB)" -ForegroundColor White
+    }
+
+    Write-Host ""
+    Write-Host "  Enter number to load, or press Enter to cancel: " -ForegroundColor DarkGray -NoNewline
+    $choice = Read-Host
+
+    if ([string]::IsNullOrWhiteSpace($choice)) { return $null }
+
+    $idx = 0
+    if ([int]::TryParse($choice, [ref]$idx)) {
+        $idx -= 1
+        if ($idx -ge 0 -and $idx -lt $files.Count) {
+            return $files[$idx].FullName
+        }
+    }
+    return $null
+}
+
+function Load-Session {
+    param([string]$FilePath)
+    try {
+        $messages = Get-Content $FilePath -Raw | ConvertFrom-Json
+        $list = [System.Collections.Generic.List[hashtable]]::new()
+        foreach ($msg in $messages) {
+            $list.Add(@{ role = $msg.role; content = $msg.content })
+        }
+        return $list
+    }
+    catch {
+        Write-Host "  Failed to load session." -ForegroundColor Red
+        return $null
+    }
+}
+
+# -- Voice ---------------------------------------------------
+$script:voiceMode  = $false
+$script:recognizer = $null
+
+function Init-Voice {
+    try {
+        Add-Type -AssemblyName System.Speech -ErrorAction Stop
+        $r = New-Object System.Speech.Recognition.SpeechRecognitionEngine
+        $grammar = New-Object System.Speech.Recognition.DictationGrammar
+        $r.LoadGrammar($grammar)
+        $r.SetInputToDefaultAudioDevice()
+        return $r
+    }
+    catch {
+        Write-Host ""
+        Write-Host "  Voice not available: $_" -ForegroundColor Red
+        Write-Host "  Make sure a microphone is connected and Windows Speech Recognition is enabled." -ForegroundColor DarkGray
+        Write-Host ""
+        return $null
+    }
+}
+
+function Get-VoiceInput {
+    param($Recognizer)
+    Write-Host "  Listening... (up to 10 seconds)" -ForegroundColor Magenta -NoNewline
+    try {
+        $result = $Recognizer.Recognize([TimeSpan]::FromSeconds(10))
+        Write-Host "`r                                   `r" -NoNewline
+        if ($result -and $result.Text) {
+            Write-Host "  You (voice): " -ForegroundColor DarkGray -NoNewline
+            Write-Host $result.Text -ForegroundColor White
+            return $result.Text
+        }
+        else {
+            Write-Host "  (nothing heard - try again)" -ForegroundColor DarkGray
+            return $null
+        }
+    }
+    catch {
+        Write-Host "`r                                   `r" -NoNewline
+        Write-Host "  Voice error: $_" -ForegroundColor Red
+        return $null
+    }
+}
+
+# -- Groq API ------------------------------------------------
 function Invoke-GroqRaw {
     param(
         [array]$Messages,
@@ -70,122 +253,126 @@ function Invoke-GroqRaw {
         return $response.choices[0].message.content
     }
     catch {
-        $statusCode = $_.Exception.Response.StatusCode.value__
-        if ($statusCode -eq 401) { throw "Invalid API key. Check your .env file." }
-        if ($statusCode -eq 429) { throw "Rate limit hit. Wait a moment and try again." }
+        $code = $_.Exception.Response.StatusCode.value__
+        if ($code -eq 401) { throw "Invalid API key. Check your .env file." }
+        if ($code -eq 429) { throw "Rate limit hit. Wait a moment." }
         throw "API error: $_"
     }
 }
 
-# -- Two-step AI: think, then produce final JSON -------------
+# -- Two-step AI (think then output) -------------------------
 function Invoke-AIResponse {
-    param([array]$ChatHistory)
+    param(
+        [array]$ChatHistory,
+        [hashtable]$Memory
+    )
 
-    # Step 1: Reasoning pass - think through what to do
-    $thinkingPrompt = @"
+    $memContext = Memory-ToContext -Memory $Memory
+
+    # Step 1: Reason through the request
+    $thinkPrompt = @"
 You are Overseason, an AI assistant for Windows PowerShell.
 
-A user sent you this message. Think carefully:
-- Is this a task to perform on the computer, or just conversation?
-- If it is a task, what is the exact correct PowerShell to accomplish it?
-- Think about what could go wrong and how to avoid it.
+$memContext
 
-CRITICAL POWERSHELL RULES YOU MUST FOLLOW:
-1. ALWAYS use double quotes for strings containing variables.
-   WRONG: '$env:USERPROFILE\Downloads'
-   RIGHT:  "$env:USERPROFILE\Downloads"
+The user sent you a message. Think carefully about what they want:
 
-2. Common correct paths (double quotes required):
+DECISION: Is this...
+A) Just conversation or a question (chat)
+B) Something to do on the computer (task)
+C) Asking you to remember something (remember)
+
+If it is a task, think about the exact correct PowerShell script.
+
+STRICT POWERSHELL RULES:
+1. Variable paths MUST use double quotes, NEVER single quotes:
+   CORRECT: New-Item -Path "$env:USERPROFILE\Downloads\MyFolder" -ItemType Directory -Force
+   WRONG:   New-Item -Path '$env:USERPROFILE\Downloads\MyFolder' -ItemType Directory -Force
+
+2. Correct built-in Windows app commands:
+   Calculator:    Start-Process "calc.exe"
+   Notepad:       Start-Process "notepad.exe"
+   Clock/Alarms:  Start-Process "ms-clock:"
+   Settings:      Start-Process "ms-settings:"
+   Microsoft Store: Start-Process "ms-windows-store:"
+   Paint:         Start-Process "mspaint.exe"
+   File Explorer: Start-Process "explorer.exe"
+   Task Manager:  Start-Process "taskmgr.exe"
+   Edge browser:  Start-Process "msedge.exe"
+   Spotify:       Start-Process "spotify:"
+   Camera:        Start-Process "microsoft.windows.camera:"
+   Photos:        Start-Process "ms-photos:"
+   Maps:          Start-Process "bingmaps:"
+
+3. Common path patterns (always double-quoted):
    Desktop:   "$env:USERPROFILE\Desktop"
    Downloads: "$env:USERPROFILE\Downloads"
    Documents: "$env:USERPROFILE\Documents"
    Music:     "$env:USERPROFILE\Music"
    Pictures:  "$env:USERPROFILE\Pictures"
 
-3. Correct ways to open Windows built-in apps:
-   Calculator:    Start-Process "calc.exe"
-   Notepad:       Start-Process "notepad.exe"
-   Clock/Alarms:  Start-Process "ms-clock:"
-   Settings:      Start-Process "ms-settings:"
-   Store:         Start-Process "ms-windows-store:"
-   Calendar:      Start-Process "outlookcal:"
-   Mail:          Start-Process "outlookmail:"
-   Maps:          Start-Process "bingmaps:"
-   Weather:       Start-Process "bingweather:"
-   Paint:         Start-Process "mspaint.exe"
-   Snipping Tool: Start-Process "SnippingTool.exe"
-   Task Manager:  Start-Process "taskmgr.exe"
-   File Explorer: Start-Process "explorer.exe"
-   Command Prompt:Start-Process "cmd.exe"
-   WordPad:       Start-Process "wordpad.exe"
-   Spotify:       Start-Process "spotify:"
-   Browser (Edge):Start-Process "msedge.exe"
+4. Creating a folder:
+   New-Item -ItemType Directory -Path "$env:USERPROFILE\Desktop\FolderName" -Force
 
-4. For creating files with content, always use Out-File or Set-Content with double-quoted paths.
-5. For creating folders, use New-Item with -ItemType Directory and double-quoted paths.
-6. For code files, write the full correct code content into the file.
-7. Multi-line scripts should use here-strings with proper syntax.
+5. Creating a file with content:
+   Set-Content -Path "$env:USERPROFILE\Desktop\file.txt" -Value "content here"
 
-Think step by step about the correct approach.
+6. For multi-line code files, use a here-string assigned to a variable, then Out-File:
+   `$code = @'
+   your code here
+   '@
+   `$code | Out-File -FilePath "$env:USERPROFILE\Desktop\script.py" -Encoding utf8
+
+7. requiresAdmin should be true ONLY for: installing software, editing registry,
+   changing system settings, modifying system folders.
+
+Think through the exact correct approach now.
 "@
 
-    $thinkMessages = @(
-        @{ role = "system"; content = $thinkingPrompt }
-    )
-    # Add the last few messages for context
-    $contextMessages = $ChatHistory | Where-Object { $_.role -ne "system" } | Select-Object -Last 6
-    foreach ($msg in $contextMessages) {
-        $thinkMessages += $msg
-    }
+    $thinkMessages = @(@{ role = "system"; content = $thinkPrompt })
+    $recent = @($ChatHistory | Where-Object { $_.role -ne "system" } | Select-Object -Last 6)
+    foreach ($m in $recent) { $thinkMessages += $m }
 
     $reasoning = Invoke-GroqRaw -Messages $thinkMessages -JsonMode $false
 
-    # Step 2: Final JSON output using the reasoning as context
+    # Step 2: Produce the final JSON
     $outputPrompt = @"
-You are Overseason, an AI assistant for Windows PowerShell.
+You are Overseason. Based on your reasoning below, produce the final JSON response.
 
-You have already reasoned through the user's request. Now produce the final response as a JSON object.
-
-Your reasoning was:
+Your reasoning:
 $reasoning
 
-Based on that reasoning, respond with ONLY a valid JSON object in one of these two formats:
+Respond with ONLY a valid JSON object. Choose the correct format:
 
-For conversation (greetings, questions, explanations):
-{"type":"chat","reply":"your short casual reply, 1-2 sentences max"}
+For conversation or questions:
+{"type":"chat","reply":"short casual answer, 1-2 sentences max"}
 
 For computer tasks:
-{"type":"task","reply":"one short sentence saying what you are doing","script":"the exact powershell script","requiresAdmin":false}
+{"type":"task","reply":"one sentence saying what you are doing","script":"the exact powershell","requiresAdmin":false}
+
+For remembering something:
+{"type":"remember","key":"short_key_name","value":"the value to store","reply":"short confirmation like got it or noted"}
 
 FINAL RULES:
-- The script must use double quotes around any path with a variable in it.
-- requiresAdmin is true only for system-level changes (install software, edit registry, system settings).
-- Return ONLY the raw JSON. No markdown. No code fences. No explanation. Just the JSON object.
+- Scripts must use double quotes for any path containing a variable.
+- Do not wrap scripts in code fences or markdown.
+- Return ONLY the raw JSON object. Nothing else.
 "@
 
-    $outputMessages = @(
-        @{ role = "system"; content = $outputPrompt }
-    )
-    foreach ($msg in $contextMessages) {
-        $outputMessages += $msg
-    }
+    $outputMessages = @(@{ role = "system"; content = $outputPrompt })
+    foreach ($m in $recent) { $outputMessages += $m }
 
     return Invoke-GroqRaw -Messages $outputMessages -JsonMode $true
 }
 
-# -- Run a generated task script -----------------------------
+# -- Run task script -----------------------------------------
 function Invoke-Task {
-    param(
-        [string]$Script,
-        [bool]$RequiresAdmin
-    )
+    param([string]$Script, [bool]$RequiresAdmin)
 
     $tmpFile = [System.IO.Path]::Combine(
         [System.IO.Path]::GetTempPath(),
         "overseason_task_$([System.Guid]::NewGuid().ToString('N')).ps1"
     )
-
-    # Write with UTF8 encoding so code files come out correct
     [System.IO.File]::WriteAllText($tmpFile, $Script, [System.Text.Encoding]::UTF8)
 
     try {
@@ -207,84 +394,167 @@ function Invoke-Task {
     }
 }
 
-# -- Conversation system prompt ------------------------------
-$systemPrompt = @"
-You are Overseason, a casual AI assistant that helps users with their Windows PC.
-Keep all chat replies short - 1 to 2 sentences, casual and friendly.
-"@
+# ============================================================
+#  MAIN
+# ============================================================
 
-# -- Main loop -----------------------------------------------
+$memory = Load-Memory
+$systemPrompt = "You are Overseason, a casual and helpful AI Windows assistant. Keep replies short and friendly."
+
 Show-Banner
+Check-ForUpdates
 
 $history = [System.Collections.Generic.List[hashtable]]::new()
 $history.Add(@{ role = "system"; content = $systemPrompt })
 
-while ($true) {
+# Try/finally catches normal exit AND Ctrl+C - auto-saves session
+try {
+    while ($true) {
 
-    Write-Host "  You: " -ForegroundColor White -NoNewline
-    $userInput = Read-Host
-
-    if ([string]::IsNullOrWhiteSpace($userInput)) { continue }
-
-    switch ($userInput.Trim().ToLower()) {
-        "exit" {
-            Write-Host ""
-            Write-Host "  Goodbye." -ForegroundColor DarkGray
-            Write-Host ""
-            exit
+        # Voice or keyboard input
+        if ($script:voiceMode -and $script:recognizer) {
+            $userInput = Get-VoiceInput -Recognizer $script:recognizer
+            if (-not $userInput) { continue }
         }
-        "clear" {
-            $history = [System.Collections.Generic.List[hashtable]]::new()
-            $history.Add(@{ role = "system"; content = $systemPrompt })
-            Show-Banner
-            continue
+        else {
+            Write-Host "  You: " -ForegroundColor White -NoNewline
+            $userInput = Read-Host
         }
-    }
 
-    $history.Add(@{ role = "user"; content = $userInput })
+        if ([string]::IsNullOrWhiteSpace($userInput)) { continue }
 
-    Write-Host ""
-    Write-Host "  Thinking..." -ForegroundColor DarkYellow -NoNewline
+        # -- Built-in commands ---------------------------------
+        switch ($userInput.Trim().ToLower()) {
 
-    $raw = $null
-    $parsed = $null
+            "exit" {
+                Save-Session -History $history
+                Write-Host ""
+                Write-Host "  Session saved. Goodbye." -ForegroundColor DarkGray
+                Write-Host ""
+                if ($script:recognizer) { $script:recognizer.Dispose() }
+                exit
+            }
 
-    try {
-        $raw = Invoke-AIResponse -ChatHistory $history
-        $parsed = $raw | ConvertFrom-Json -ErrorAction Stop
-    }
-    catch {
-        Write-Host "`r                      `r" -NoNewline
-        Write-Host "  Overseason: Something went wrong - $_" -ForegroundColor Red
+            "clear" {
+                Save-Session -History $history
+                $history = [System.Collections.Generic.List[hashtable]]::new()
+                $history.Add(@{ role = "system"; content = $systemPrompt })
+                Show-Banner -VoiceOn $script:voiceMode
+                continue
+            }
+
+            "/voice" {
+                if (-not $script:voiceMode) {
+                    $script:recognizer = Init-Voice
+                    if ($script:recognizer) {
+                        $script:voiceMode = $true
+                        Write-Host ""
+                        Write-Host "  Voice mode ON - speak after you see 'Listening...'" -ForegroundColor Magenta
+                        Write-Host ""
+                    }
+                }
+                else {
+                    $script:voiceMode = $false
+                    if ($script:recognizer) {
+                        $script:recognizer.Dispose()
+                        $script:recognizer = $null
+                    }
+                    Write-Host ""
+                    Write-Host "  Voice mode OFF" -ForegroundColor DarkGray
+                    Write-Host ""
+                }
+                continue
+            }
+
+            "/sessions" {
+                $sessionFile = Show-Sessions
+                if ($sessionFile) {
+                    $loaded = Load-Session -FilePath $sessionFile
+                    if ($loaded) {
+                        Save-Session -History $history
+                        $history = [System.Collections.Generic.List[hashtable]]::new()
+                        $history.Add(@{ role = "system"; content = $systemPrompt })
+                        foreach ($msg in $loaded) { $history.Add($msg) }
+                        Write-Host ""
+                        Write-Host "  Session loaded - continuing where you left off." -ForegroundColor Green
+                        Write-Host ""
+                    }
+                }
+                continue
+            }
+
+            "/memory" {
+                Write-Host ""
+                if ($memory.Count -eq 0) {
+                    Write-Host "  No memories saved yet. Just tell me things like 'my name is Luke'." -ForegroundColor DarkGray
+                }
+                else {
+                    Write-Host "  What I remember about you:" -ForegroundColor Cyan
+                    Write-Host ("  " + ("-" * 40)) -ForegroundColor DarkGray
+                    foreach ($key in $memory.Keys) {
+                        Write-Host "  $key`: $($memory[$key])" -ForegroundColor White
+                    }
+                }
+                Write-Host ""
+                continue
+            }
+        }
+
+        # -- Send to AI ----------------------------------------
+        $history.Add(@{ role = "user"; content = $userInput })
+
         Write-Host ""
-        $history.RemoveAt($history.Count - 1)
-        continue
-    }
+        Write-Host "  Thinking..." -ForegroundColor DarkYellow -NoNewline
 
-    Write-Host "`r                      `r" -NoNewline
-
-    $history.Add(@{ role = "assistant"; content = $raw })
-
-    if ($parsed.type -eq "task") {
-        Write-Host "  Overseason: $($parsed.reply)" -ForegroundColor Cyan
-        Write-Host ""
-        Write-Host ("  " + ("-" * 50)) -ForegroundColor DarkGray
-        Write-Host ""
+        $raw    = $null
+        $parsed = $null
 
         try {
-            Invoke-Task -Script $parsed.script -RequiresAdmin ([bool]$parsed.requiresAdmin)
+            $raw    = Invoke-AIResponse -ChatHistory $history -Memory $memory
+            $parsed = $raw | ConvertFrom-Json -ErrorAction Stop
         }
         catch {
-            Write-Host "  [Task failed: $_]" -ForegroundColor Red
+            Write-Host "`r                      `r" -NoNewline
+            Write-Host "  Overseason: Something went wrong - $_" -ForegroundColor Red
+            Write-Host ""
+            $history.RemoveAt($history.Count - 1)
+            continue
+        }
+
+        Write-Host "`r                      `r" -NoNewline
+        $history.Add(@{ role = "assistant"; content = $raw })
+
+        switch ($parsed.type) {
+            "task" {
+                Write-Host "  Overseason: $($parsed.reply)" -ForegroundColor Cyan
+                Write-Host ""
+                Write-Host ("  " + ("-" * 50)) -ForegroundColor DarkGray
+                Write-Host ""
+                try {
+                    Invoke-Task -Script $parsed.script -RequiresAdmin ([bool]$parsed.requiresAdmin)
+                }
+                catch {
+                    Write-Host "  [Task failed: $_]" -ForegroundColor Red
+                }
+                Write-Host ""
+                Write-Host ("  " + ("-" * 50)) -ForegroundColor DarkGray
+                Write-Host "  Done." -ForegroundColor Green
+            }
+            "remember" {
+                $memory[$parsed.key] = $parsed.value
+                Save-Memory -Memory $memory
+                Write-Host "  Overseason: $($parsed.reply)" -ForegroundColor Cyan
+            }
+            default {
+                Write-Host "  Overseason: $($parsed.reply)" -ForegroundColor Cyan
+            }
         }
 
         Write-Host ""
-        Write-Host ("  " + ("-" * 50)) -ForegroundColor DarkGray
-        Write-Host "  Done." -ForegroundColor Green
     }
-    else {
-        Write-Host "  Overseason: $($parsed.reply)" -ForegroundColor Cyan
-    }
-
-    Write-Host ""
+}
+finally {
+    # Auto-save runs on exit, Ctrl+C, or any crash
+    Save-Session -History $history
+    if ($script:recognizer) { $script:recognizer.Dispose() }
 }
